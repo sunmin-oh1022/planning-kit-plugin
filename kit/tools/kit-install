@@ -1,0 +1,303 @@
+#!/usr/bin/env python3
+"""kit-install — planning-kit 설치·팩 관리 CLI
+
+사용법:
+  kit-install core <project-dir>
+      core 골격을 프로젝트에 복사
+
+  kit-install pack <pack-name> <project-dir>
+      팩을 프로젝트에 설치 (files 복사 + CLAUDE.md 슬롯 주입)
+
+  kit-install list
+      사용 가능한 팩 목록
+
+  kit-install doctor <project-dir>
+      프로젝트에 설치된 팩 상태·정합성 진단
+
+의존: PyYAML (없으면 최소 파서로 대체 — 아래 tinyyaml)
+"""
+import argparse
+import json
+import os
+import re
+import shutil
+import stat
+import sys
+from pathlib import Path
+
+KIT_ROOT = Path(__file__).resolve().parent.parent
+
+# ---------- 최소 YAML 파서 (외부 의존 회피) ----------
+def tinyyaml_load(text: str):
+    """평문 YAML만 지원 — 이 킷의 pack.yaml 스키마 한정.
+    지원: 최상위 키, 문자열/숫자 값, 리스트(-), 중첩 dict, 여러 줄 값 미지원."""
+    root = {}
+    stack = [(0, root, None)]
+    for raw in text.splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip())
+        line = raw.strip()
+        while stack and stack[-1][0] > indent:
+            stack.pop()
+        parent_indent, parent, list_ctx = stack[-1]
+
+        if line.startswith("- "):
+            item_body = line[2:].strip()
+            if list_ctx is None:
+                # 리스트가 시작되지 않은 상태 — 새 리스트 컨텍스트 생성 시도
+                # 상위 key: 형태에서 이미 [] 로 초기화됐다고 가정
+                continue
+            if ":" in item_body and not item_body.startswith('"'):
+                # 리스트 항목이 dict
+                new = {}
+                _apply_kv(new, item_body)
+                list_ctx.append(new)
+                stack.append((indent + 2, new, None))
+            else:
+                list_ctx.append(_strip_quotes(item_body))
+        elif ":" in line:
+            key, _, val = line.partition(":")
+            key = key.strip()
+            val = val.strip()
+            if val == "":
+                # 다음 라인이 리스트인지 dict인지 다음 줄에서 판단
+                # 리스트일 가능성 대비 [] 로 초기화하되, dict가 나오면 교체
+                parent[key] = []
+                stack.append((indent + 2, parent, parent[key]))
+            elif val == "[]":
+                parent[key] = []
+            else:
+                parent[key] = _coerce(_strip_quotes(val))
+    return root
+
+def _apply_kv(d, s):
+    key, _, val = s.partition(":")
+    d[key.strip()] = _coerce(_strip_quotes(val.strip()))
+
+def _strip_quotes(s):
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'"):
+        return s[1:-1]
+    # 인라인 YAML 주석 제거 (따옴표 밖의 #)
+    if " #" in s:
+        s = s.split(" #", 1)[0].rstrip()
+    return s
+
+def _coerce(v):
+    # 문자열 유지 — 자동 int 변환 안 함 (mode "755" 같은 필드 보호)
+    return v
+
+try:
+    import yaml
+    def load_yaml(text): return yaml.safe_load(text)
+except ImportError:
+    load_yaml = tinyyaml_load
+
+# ---------- 명령: list ----------
+def cmd_list(_args):
+    packs_dir = KIT_ROOT / "packs"
+    if not packs_dir.exists():
+        print("packs/ 디렉토리 없음", file=sys.stderr); return 1
+    print(f"planning-kit @ {KIT_ROOT}\n")
+    print("사용 가능한 팩:")
+    for p in sorted(packs_dir.iterdir()):
+        yaml_path = p / "pack.yaml"
+        if not yaml_path.exists(): continue
+        meta = load_yaml(yaml_path.read_text(encoding="utf-8"))
+        name = meta.get("name", p.name)
+        version = meta.get("version", "?")
+        desc = meta.get("description", "")
+        print(f"  {name:20s} v{version}  {desc}")
+    return 0
+
+# ---------- 명령: core ----------
+def cmd_core(args):
+    src = KIT_ROOT / "core"
+    dst = Path(args.project_dir).resolve()
+    if not src.exists():
+        print(f"core/ 없음: {src}", file=sys.stderr); return 1
+    dst.mkdir(parents=True, exist_ok=True)
+    print(f"core → {dst}")
+    for item in src.iterdir():
+        target = dst / item.name
+        if item.is_dir():
+            if target.exists():
+                # 병합 복사
+                _merge_copy(item, target)
+            else:
+                shutil.copytree(item, target)
+        else:
+            shutil.copy2(item, target)
+    print("✅ core 설치 완료")
+    return 0
+
+def _merge_copy(src: Path, dst: Path):
+    for item in src.iterdir():
+        t = dst / item.name
+        if item.is_dir():
+            t.mkdir(exist_ok=True)
+            _merge_copy(item, t)
+        else:
+            shutil.copy2(item, t)
+
+def _entry_file(dst: Path):
+    """프로젝트 진입점 — 본체는 CLAUDE.md, 구버전(AGENTS.md 본체)은 폴백."""
+    for name in ("CLAUDE.md", "AGENTS.md"):
+        p = dst / name
+        if p.exists():
+            return p
+    return None
+
+# ---------- 명령: pack ----------
+def cmd_pack(args):
+    pack_name = args.pack_name
+    pack_dir = KIT_ROOT / "packs" / pack_name
+    yaml_path = pack_dir / "pack.yaml"
+    if not yaml_path.exists():
+        print(f"팩 없음: {pack_name}", file=sys.stderr); return 1
+
+    meta = load_yaml(yaml_path.read_text(encoding="utf-8"))
+    dst = Path(args.project_dir).resolve()
+    if not _entry_file(dst) and not args.force:
+        print(f"⚠️  {dst}/CLAUDE.md 없음 — core 먼저 설치했나? (--force 로 무시)", file=sys.stderr)
+        return 1
+
+    print(f"[{pack_name} v{meta.get('version', '?')}] → {dst}")
+
+    # 1) 파일 복사
+    for f in (meta.get("files") or []):
+        src_f = pack_dir / f["src"]
+        dst_f = dst / f["dst"]
+        dst_f.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_f, dst_f)
+        if "mode" in f:
+            m = f["mode"]
+            m_int = int(str(m), 8) if not isinstance(m, int) or m > 511 else m
+            # 사용자가 mode: 755 (unquoted) 라 쓴 경우 우린 8진수 755 로 해석
+            dst_f.chmod(int(str(m), 8))
+        print(f"  copy  {f['dst']}")
+
+    # 2) 슬롯 주입 (진입점은 CLAUDE.md — 구버전 AGENTS.md 본체 프로젝트도 지원)
+    for inj in (meta.get("inject") or []):
+        if inj["target"] in ("CLAUDE.md", "AGENTS.md"):
+            target = _entry_file(dst) or (dst / "CLAUDE.md")
+        else:
+            target = dst / inj["target"]
+        slot = inj["slot"]
+        lines = inj.get("lines") or []
+        if not target.exists():
+            print(f"  ⚠️  주입 대상 없음: {inj['target']} — 스킵")
+            continue
+        if _inject_slot(target, slot, lines, pack_name):
+            print(f"  inject  {target.name} [{slot}]  +{len(lines)}줄")
+
+    # 3) 병합 (JSON)
+    for m in (meta.get("merge") or []):
+        src_f = pack_dir / m["src"]
+        dst_f = dst / m["target"]
+        strategy = m.get("strategy", "json-merge")
+        if strategy == "json-merge":
+            _json_merge(src_f, dst_f)
+            print(f"  merge  {m['target']} ← {m['src']} (json)")
+
+    print(f"✅ {pack_name} 설치 완료")
+
+    # post_install_steps 안내
+    steps = meta.get("post_install_steps") or []
+    if steps:
+        print("\n다음 단계 (수동):")
+        for s in steps:
+            print(f"  - {s}")
+
+    return 0
+
+def _inject_slot(target: Path, slot: str, lines, pack_name: str) -> bool:
+    """<!-- PACK-SLOT:slot --> 또는 # PACK-SLOT:slot 마커 아래에 라인들을 삽입.
+    파일 유형별로 begin/end 주석 스타일 자동 결정. 같은 팩 이전 블록이 있으면 교체."""
+    marker_re = re.compile(
+        r"(<!-- PACK-SLOT:" + re.escape(slot) + r"[^>]*-->|# PACK-SLOT:" + re.escape(slot) + r"[^\n]*)"
+    )
+    text = target.read_text(encoding="utf-8")
+    m = marker_re.search(text)
+    if not m:
+        print(f"  ⚠️  {target.name} 에 PACK-SLOT:{slot} 마커 없음 — 스킵")
+        return False
+    matched_marker = m.group(0)
+    # 마커 스타일에 따라 begin/end 주석 결정
+    if matched_marker.startswith("<!--"):
+        begin_tag = f"<!-- pack:{pack_name} begin -->"
+        end_tag = f"<!-- pack:{pack_name} end -->"
+    else:
+        begin_tag = f"# pack:{pack_name} begin"
+        end_tag = f"# pack:{pack_name} end"
+    # 기존 블록 제거
+    block_re = re.compile(re.escape(begin_tag) + r".*?" + re.escape(end_tag) + r"\n?", re.DOTALL)
+    text = block_re.sub("", text)
+    # 새 블록 삽입
+    block = f"{begin_tag}\n" + "\n".join(lines) + f"\n{end_tag}\n"
+    text = text.replace(matched_marker, matched_marker + "\n" + block, 1)
+    target.write_text(text, encoding="utf-8")
+    return True
+
+def _json_merge(src: Path, dst: Path):
+    src_data = json.loads(src.read_text(encoding="utf-8"))
+    dst_data = json.loads(dst.read_text(encoding="utf-8")) if dst.exists() else {}
+    for k, v in src_data.items():
+        if k in dst_data and isinstance(dst_data[k], dict) and isinstance(v, dict):
+            dst_data[k].update(v)
+        else:
+            dst_data[k] = v
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(json.dumps(dst_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+# ---------- 명령: doctor ----------
+def cmd_doctor(args):
+    dst = Path(args.project_dir).resolve()
+    print(f"진단 대상: {dst}\n")
+
+    # core 존재
+    core_ok = _entry_file(dst) is not None and (dst / "rules" / "behavior.md").exists()
+    print(f"  [{'✅' if core_ok else '❌'}] core 설치")
+
+    # 팩 감지 (activation.detects 매칭)
+    for p in sorted((KIT_ROOT / "packs").iterdir()):
+        yaml_path = p / "pack.yaml"
+        if not yaml_path.exists(): continue
+        meta = load_yaml(yaml_path.read_text(encoding="utf-8"))
+        detects = (meta.get("activation") or {}).get("detects") or []
+        installed = any((dst.glob(pattern)) if "*" in pattern else [(dst / pattern)] for pattern in detects)
+        # 간이 판정: files 의 첫 dst 존재 여부로 대체
+        files = meta.get("files") or []
+        pack_installed = files and (dst / files[0]["dst"]).exists()
+        mark = "✅" if pack_installed else "⚪"
+        print(f"  [{mark}] {meta['name']:20s} {'(설치됨)' if pack_installed else '(미설치)'}")
+
+    return 0
+
+# ---------- 진입점 ----------
+def main():
+    parser = argparse.ArgumentParser(prog="kit-install", description="planning-kit 설치·팩 관리")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_list = sub.add_parser("list", help="사용 가능한 팩 목록")
+    p_list.set_defaults(func=cmd_list)
+
+    p_core = sub.add_parser("core", help="core 골격 복사")
+    p_core.add_argument("project_dir")
+    p_core.set_defaults(func=cmd_core)
+
+    p_pack = sub.add_parser("pack", help="팩 설치")
+    p_pack.add_argument("pack_name")
+    p_pack.add_argument("project_dir")
+    p_pack.add_argument("--force", action="store_true")
+    p_pack.set_defaults(func=cmd_pack)
+
+    p_doc = sub.add_parser("doctor", help="설치 상태 진단")
+    p_doc.add_argument("project_dir")
+    p_doc.set_defaults(func=cmd_doctor)
+
+    args = parser.parse_args()
+    sys.exit(args.func(args))
+
+if __name__ == "__main__":
+    main()

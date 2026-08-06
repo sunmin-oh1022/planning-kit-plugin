@@ -1,0 +1,35 @@
+name: spec-verify
+version: 1.0.0
+description: 마감 전 문서 셀프 검토 자동화 — 단일 패스(spec-self-review) + 멀티에이전트 교차검증(spec-verify-loop) + 의도 캡처(intent-capture)
+authors: [ria.sunmin]
+requires:
+  core: ">=1.0"
+
+files:
+  - src: .claude/skills/spec-self-review/SKILL.md
+    dst: .claude/skills/spec-self-review/SKILL.md
+  - src: .claude/skills/spec-verify-loop/SKILL.md
+    dst: .claude/skills/spec-verify-loop/SKILL.md
+  - src: .claude/skills/intent-capture/SKILL.md
+    dst: .claude/skills/intent-capture/SKILL.md
+  - src: .claude/workflows/spec-verify-loop.js
+    dst: .claude/workflows/spec-verify-loop.js
+  - src: docs/REVIEW.md
+    dst: docs/REVIEW.md
+
+inject:
+  - target: CLAUDE.md
+    slot: skills
+    lines:
+      - "- `spec-self-review` — 마감 전 기획 문서 셀프 검토(Phase 2) + 정합성 검증."
+      - "- `spec-verify-loop` — 도메인/버전 사이클 검증 루프. 7축 멀티에이전트 교차검증 + 적대적 환각 제거."
+      - "- `intent-capture` — 말 한 줄짜리 아이디어를 구조적 Q&A로 되물어 docs 초안화(Phase 1 앞단)."
+
+activation:
+  detects:
+    - docs/REVIEW.md  # 스킬 실행 시 이 파일에 누적 기록
+
+uninstall:
+  - "files 목록의 dst 경로 삭제"
+  - "CLAUDE.md PACK-SLOT:skills 에 주입된 3줄 제거"
+  - "docs/REVIEW.md 는 기획자 판단으로 유지 or 삭제 (누적 검토 기록물이라 보존 권장)"

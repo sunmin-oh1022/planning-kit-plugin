@@ -1,0 +1,42 @@
+name: ux-review
+version: 1.0.0
+description: 이론 기반(Norman·UCSD·감성디자인) UX 검토 스킬 — 개념 층 + 플로우 층
+authors: [ria.sunmin]
+requires:
+  core: ">=1.0"
+recommends:
+  # 플로우 층 리뷰가 활성되려면 core rules/ux/flows/ 가 채워져 있어야 함 (core에 포함)
+
+files:
+  - src: .claude/skills/ux-review/SKILL.md
+    dst: .claude/skills/ux-review/SKILL.md
+  - src: .claude/skills/ux-review/references/_index.md
+    dst: .claude/skills/ux-review/references/_index.md
+  - src: .claude/skills/ux-review/references/norman-doet.md
+    dst: .claude/skills/ux-review/references/norman-doet.md
+  - src: .claude/skills/ux-review/references/norman-emotional-design.md
+    dst: .claude/skills/ux-review/references/norman-emotional-design.md
+  - src: .claude/skills/ux-review/references/norman-ucsd-1986.md
+    dst: .claude/skills/ux-review/references/norman-ucsd-1986.md
+  - src: .claude/skills/ux-review/references/review-checklist.md
+    dst: .claude/skills/ux-review/references/review-checklist.md
+  - src: .claude/skills/ux-review/references/ux-trends-2026.md
+    dst: .claude/skills/ux-review/references/ux-trends-2026.md
+  - src: docs/UX-REVIEW.md
+    dst: docs/UX-REVIEW.md
+
+inject:
+  - target: CLAUDE.md
+    slot: skills
+    lines:
+      - "- `ux-review` — 이론 근거 리뷰(개념 층) + 플로우 문서 항목별 대조(플로우 층). 결과는 `docs/UX-REVIEW.md`."
+  - target: .gitignore
+    slot: bottom
+    lines:
+      - "# ux-review 팩 — 개인 UX 검토 로그 (공유 금지)"
+      - "docs/UX-REVIEW.md"
+
+uninstall:
+  - "files 목록의 dst 경로 삭제 (docs/UX-REVIEW.md 는 개인 로그라 백업 후 삭제 권장)"
+  - "CLAUDE.md PACK-SLOT:skills 에 주입된 라인 제거"
+  - ".gitignore 에 주입된 라인 제거"

@@ -1,0 +1,29 @@
+name: decision-log
+version: 1.0.0
+description: 의사결정 단일 로그(DECISIONS.md) + 회의록 원본 보관 규칙(docs/meetings/) + 회의록→로그 동기화 스킬(decision-sync)
+authors: [ria.sunmin]
+requires:
+  core: ">=1.0"
+
+files:
+  - src: .claude/skills/decision-sync/SKILL.md
+    dst: .claude/skills/decision-sync/SKILL.md
+  - src: docs/DECISIONS.md
+    dst: docs/DECISIONS.md
+  - src: docs/meetings/README.md
+    dst: docs/meetings/README.md
+
+inject:
+  - target: CLAUDE.md
+    slot: skills
+    lines:
+      - "- `decision-sync` — 회의록·일정 문서에서 결정을 추출해 `docs/DECISIONS.md`(의사결정 단일 진실) 갱신. \"결정 반영\", 회의록 저장 직후."
+
+activation:
+  detects:
+    - docs/DECISIONS.md  # 결정 상태의 단일 진실 — 스킬 실행 시 이 파일을 갱신
+
+uninstall:
+  - "files 목록의 dst 경로 삭제"
+  - "CLAUDE.md PACK-SLOT:skills 에 주입된 1줄 제거"
+  - "docs/DECISIONS.md · docs/meetings/ 는 의사결정 이력이라 보존 강력 권장"

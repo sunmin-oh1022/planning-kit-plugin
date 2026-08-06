@@ -1,0 +1,83 @@
+name: designspec
+version: 1.0.0
+description: 화면설계서(HTML → PDF) 파이프라인 + 형상관리 (절차 A · 버전 업데이트, 절차 B · 릴리스 컷)
+authors: [ria.sunmin]
+requires:
+  core: ">=1.0"
+
+# 이 팩이 프로젝트에 설치될 때 복사되는 파일 (상대경로 기준: 팩 루트 → 프로젝트 루트)
+files:
+  - src: rules/methodology/change-management.md
+    dst: rules/methodology/change-management.md
+  - src: rules/methodology/designspec.md
+    dst: rules/methodology/designspec.md
+  - src: prototype/_template.designspec.html
+    dst: prototype/_template.designspec.html
+  - src: prototype/build-all.sh
+    dst: prototype/build-all.sh
+    mode: "755"
+  - src: prototype/build-pdf.sh
+    dst: prototype/build-pdf.sh
+    mode: "755"
+  - src: prototype/README.md
+    dst: prototype/README.md
+  - src: prototype/화면설계서-가이드.md
+    dst: prototype/화면설계서-가이드.md
+  - src: scripts/release-cut.sh
+    dst: scripts/release-cut.sh
+    mode: "755"
+  - src: .claude/skills/release-cut/SKILL.md
+    dst: .claude/skills/release-cut/SKILL.md
+  - src: .claude/skills/designspec-version-update/SKILL.md
+    dst: .claude/skills/designspec-version-update/SKILL.md
+
+# CLAUDE.md 의 PACK-SLOT 마커 아래에 이 라인들이 주입됨
+inject:
+  - target: CLAUDE.md
+    slot: rule-index
+    lines:
+      - "- **화면설계서 제작·버전 → `rules/methodology/designspec.md`** (designspec 작성·버전·형상 관리)"
+  - target: CLAUDE.md
+    slot: skills
+    lines:
+      - "- `release-cut` — 배포 후 다음 버전 라인 개시(형상 관리·절차 B). \"vX 배포했고 다음 버전으로\"."
+      - "- `designspec-version-update` — docs 동기화 후 화면설계서 버전 업데이트(절차 A)."
+
+# 팩 활성화 자동 감지 신호 (설치 후 이 파일이 존재하면 관련 기능이 활성)
+activation:
+  detects:
+    - prototype/*.designspec.html  # core check-docs.sh §8이 이걸 감지해 자동 실행
+    - prototype/.baseline/         # release-cut.sh 가 첫 컷 시 생성
+
+# 플레이스홀더 (설치 후 사람이 채워야 함)
+placeholders:
+  - path: prototype/_template.designspec.html
+    tokens:
+      - PROJECT_NAME
+      - PROJECT_NAME_EN
+      - TEAM
+      - AUTHOR
+      - BRAND_HTML
+      - ORG
+      - YEAR
+      - SLOGAN
+      - GOAL_ONE_LINE
+      - GOAL_1
+      - GOAL_2
+      - GOAL_3
+      - PERIOD
+      - PHASES
+      - DEV_FORM
+      - RESOLUTION
+      - ENVIRONMENT
+      - INTEGRATIONS
+      - REQ_SOURCE
+      - API_SOURCE
+      - YYYY-MM-DD
+      - "초기 버전 설명"
+
+# 팩 제거 시 되돌리는 방법
+uninstall:
+  - "위 files 목록의 dst 경로 삭제"
+  - "CLAUDE.md 의 PACK-SLOT:rule-index · PACK-SLOT:skills 에 주입된 라인 제거"
+  - "core/scripts/check-docs.sh §8은 prototype/*.designspec.html이 없으면 자동 스킵되므로 별도 조치 불필요"

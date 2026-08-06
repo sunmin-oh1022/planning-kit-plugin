@@ -1,0 +1,31 @@
+name: confluence-sync
+version: 1.0.0
+description: 로컬 docs를 Confluence 위키에 동기화하는 유틸 팩 (독립 · 주입 슬롯 없음)
+authors: [ria.sunmin]
+requires:
+  core: ">=1.0"
+
+files:
+  - src: scripts/sync.sh
+    dst: scripts/sync.sh
+    mode: "755"
+  - src: scripts/sync_confluence.py
+    dst: scripts/sync_confluence.py
+  - src: scripts/requirements.txt
+    dst: scripts/requirements.txt
+  - src: .env.confluence.example
+    dst: .env.confluence.example
+
+# 주입 슬롯 없음 (독립 유틸)
+inject: []
+
+# 사용자가 로컬 시크릿 파일 만들어야 함 (git 추적 제외)
+post_install_steps:
+  - "cp .env.confluence.example .env.confluence.local"
+  - ".env.confluence.local 에 CONFLUENCE_URL / USER / API_TOKEN / SPACE_KEY 입력"
+  - "pip install -r scripts/requirements.txt"
+  - ".gitignore 에 .env.confluence.local 추가 (있어야 함)"
+
+uninstall:
+  - "files 목록의 dst 삭제"
+  - ".env.confluence.local (있으면) 개별 판단"
