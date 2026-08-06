@@ -30,3 +30,4 @@ Claude를 **기획 코치**로 만드는 플러그인. 설치하면 "기획 시�
 ## 유지보수
 
 이 플러그인은 planning-kit 저장소에서 `tools/build-plugin`으로 생성됩니다. 직접 수정하지 말고 저장소를 수정한 뒤 다시 빌드하세요.
+# planning-kit-plugin
